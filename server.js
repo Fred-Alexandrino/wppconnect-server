@@ -53,7 +53,8 @@ function ehMensagemRelevante(texto) {
     /🔴|🟡|🟢|🟠|✅|⏸️/.test(texto) ||
     /Usina:/i.test(texto) ||
     /DESVIO:/i.test(texto) ||
-    /·\s*(Problema|Descrição|Impacto)/i.test(texto)
+    /·\s*(Problema|Descrição|Impacto)/i.test(texto) ||
+    /ATUALIZA[CÇ][AÃ]O\s+(OS|ATIVIDADE)/i.test(texto)
   );
 }
 
