@@ -273,6 +273,37 @@ app.get("/qr", (req, res) => {
   `);
 });
 
+/**
+ * POST /api/enviar-mensagem
+ *
+ * Envia uma mensagem de texto para um grupo/contato do WhatsApp.
+ * Usado pelo envio automático de comunicados (ex.: OSs em aberto às 7h).
+ *
+ * Body: { "grupoId": "1234567890-123456@g.us", "texto": "..." }
+ * Headers: X-Webhook-Secret — obrigatório se WEBHOOK_SECRET estiver configurado
+ */
+app.post("/api/enviar-mensagem", async (req, res) => {
+  if (WEBHOOK_SECRET) {
+    const secret = req.headers["x-webhook-secret"] || "";
+    if (secret !== WEBHOOK_SECRET) {
+      return res.status(401).json({ ok: false, erro: "unauthorized" });
+    }
+  }
+  if (!sock || statusConexao !== "conectado") {
+    return res.status(503).json({ ok: false, erro: "WhatsApp não conectado" });
+  }
+  const { grupoId, texto } = req.body || {};
+  if (!grupoId || !texto) {
+    return res.status(400).json({ ok: false, erro: "grupoId e texto são obrigatórios" });
+  }
+  try {
+    await sock.sendMessage(grupoId, { text: texto });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 app.get("/grupos", async (req, res) => {
   if (!sock || statusConexao !== "conectado") {
     return res.json({ erro: "WhatsApp não conectado" });
