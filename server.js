@@ -77,6 +77,18 @@ async function encaminharParaServidor(grupoId, texto) {
   return resp.data;
 }
 
+// ── Alerta imediato pro dashboard quando a conexão muda de estado ───────
+async function alertarStatusConexao(status, detalhe = "") {
+  if (!SERVIDOR_URL) return;
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (WEBHOOK_SECRET) headers["X-Webhook-Secret"] = WEBHOOK_SECRET;
+    await axios.post(`${SERVIDOR_URL}/alertar-wpp-status`, { status, detalhe }, { headers, timeout: 10000 });
+  } catch (e) {
+    console.error("⚠️ Falha ao alertar status de conexão:", e.message);
+  }
+}
+
 // ── Inicia conexão com WhatsApp ──────────────────────────────────────────
 async function conectar() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
@@ -95,6 +107,8 @@ async function conectar() {
 
   sock.ev.on("creds.update", saveCreds);
 
+  let estavaDesconectado = false;
+
   // ── Monitora mudanças de conexão ───────────────────────────────────────
   sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
     if (qr) {
@@ -104,6 +118,7 @@ async function conectar() {
           qrCodeAtual   = url;
           statusConexao = "aguardando_qr";
           console.log("📱 QR Code gerado — acesse /qr para escanear");
+          alertarStatusConexao("aguardando_qr");
         }
       });
     }
@@ -113,6 +128,10 @@ async function conectar() {
       qrCodeAtual   = null;
       console.log("✅ WhatsApp conectado!");
       console.log("📡 Monitoramento em tempo real ATIVO");
+      if (estavaDesconectado) {
+        alertarStatusConexao("reconectado");
+        estavaDesconectado = false;
+      }
     }
 
     if (connection === "close") {
@@ -120,6 +139,8 @@ async function conectar() {
       const reconectar = codigo !== DisconnectReason.loggedOut;
       console.log(`⚠️  Conexão encerrada (código ${codigo}). Reconectando: ${reconectar}`);
       statusConexao = "desconectado";
+      estavaDesconectado = true;
+      alertarStatusConexao("desconectado", `código ${codigo}`);
       if (reconectar) {
         setTimeout(conectar, 5000);
       } else {
