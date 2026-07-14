@@ -132,6 +132,8 @@ async function conectar() {
   sock.ev.on("creds.update", saveCreds);
 
   let estavaDesconectado = false;
+  let timerAlertaDesconexao = null;
+  const JANELA_GRACA_MS = 25000; // 25s — tempo pra reconexão automática
 
   // ── Monitora mudanças de conexão ───────────────────────────────────────
   sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
@@ -152,6 +154,16 @@ async function conectar() {
       qrCodeAtual   = null;
       console.log("✅ WhatsApp conectado!");
       console.log("📡 Monitoramento em tempo real ATIVO");
+      // reconectou dentro da janela de graça — cancela o alerta pendente,
+      // já que foi só uma instabilidade momentânea (comum em conexões
+      // WebSocket) e não uma queda de verdade. Sem isso, todo blip
+      // passageiro virava notificação falsa (relatado pelo Fred em
+      // 14/07/2026 — "WhatsApp desconectado" chegando com frequência sem
+      // nenhuma queda real).
+      if (timerAlertaDesconexao) {
+        clearTimeout(timerAlertaDesconexao);
+        timerAlertaDesconexao = null;
+      }
       if (estavaDesconectado) {
         alertarStatusConexao("reconectado");
         estavaDesconectado = false;
@@ -164,7 +176,18 @@ async function conectar() {
       console.log(`⚠️  Conexão encerrada (código ${codigo}). Reconectando: ${reconectar}`);
       statusConexao = "desconectado";
       estavaDesconectado = true;
-      alertarStatusConexao("desconectado", `código ${codigo}`);
+
+      // só alerta se a conexão continuar caída depois da janela de graça —
+      // dá tempo pro Baileys reconectar sozinho antes de incomodar o Fred
+      // com uma notificação de algo que já se resolveu.
+      if (timerAlertaDesconexao) clearTimeout(timerAlertaDesconexao);
+      timerAlertaDesconexao = setTimeout(() => {
+        if (statusConexao === "desconectado") {
+          alertarStatusConexao("desconectado", `código ${codigo}, sem reconectar após ${JANELA_GRACA_MS/1000}s`);
+        }
+        timerAlertaDesconexao = null;
+      }, JANELA_GRACA_MS);
+
       if (reconectar) {
         setTimeout(conectar, 5000);
       } else {
