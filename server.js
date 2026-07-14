@@ -58,7 +58,7 @@ function ehMensagemRelevante(texto) {
   );
 }
 
-// ── Encaminha mensagem para o app.py (webhook) ───────────────────────────
+// ── Encaminha mensagem para o app.py (webhook), com retry + alerta ──────
 async function encaminharParaServidor(grupoId, texto) {
   if (!SERVIDOR_URL || !texto) return null;
 
@@ -73,8 +73,32 @@ async function encaminharParaServidor(grupoId, texto) {
     },
   };
 
-  const resp = await axios.post(`${SERVIDOR_URL}/webhook`, payload, { headers, timeout: 15000 });
-  return resp.data;
+  const esperas = [2000, 5000, 10000];
+  let ultimoErro = null;
+  for (let tentativa = 0; tentativa <= esperas.length; tentativa++) {
+    try {
+      const resp = await axios.post(`${SERVIDOR_URL}/webhook`, payload, { headers, timeout: 15000 });
+      return resp.data;
+    } catch (err) {
+      ultimoErro = err;
+      console.error(`❌ [Repasse] Tentativa ${tentativa + 1} falhou: ${err.message}`);
+      if (tentativa < esperas.length) {
+        await new Promise(r => setTimeout(r, esperas[tentativa]));
+      }
+    }
+  }
+
+  // Todas as tentativas falharam — mensagem real de ocorrência ficaria
+  // perdida silenciosamente (só no console, que ninguém vê em tempo
+  // real). Alerta imediato pro dashboard, incluindo um trecho do texto
+  // perdido, pra dar pelo menos a chance de registrar manualmente depois
+  // via /processar-texto-manual (bug identificado em 13/07/2026: mensagens
+  // reais de rondas somem por dias sem ninguém saber).
+  await alertarStatusConexao(
+    "falha_encaminhamento",
+    `Grupo ${grupoId} — falha: ${ultimoErro?.message || "desconhecida"} — início: "${texto.substring(0, 200)}"`
+  );
+  return null;
 }
 
 // ── Alerta imediato pro dashboard quando a conexão muda de estado ───────
@@ -178,7 +202,11 @@ async function conectar() {
         console.log(`   ${texto.substring(0, 80)}...`);
 
         const resultado = await encaminharParaServidor(grupoId, texto);
-        console.log(`   ✅ Gravado: ${JSON.stringify(resultado)}`);
+        if (resultado === null) {
+          console.error(`   ❌ Falha ao gravar após todas as tentativas — alerta enviado`);
+        } else {
+          console.log(`   ✅ Gravado: ${JSON.stringify(resultado)}`);
+        }
       } catch (err) {
         console.error("❌ [Tempo real] Erro ao processar mensagem:", err.message);
       }
