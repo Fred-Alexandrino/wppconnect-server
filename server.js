@@ -19,6 +19,7 @@ const express = require("express");
 const axios   = require("axios");
 const pino    = require("pino");
 const fs      = require("fs");
+const path    = require("path");
 
 const app = express();
 app.use(express.json());
@@ -28,6 +29,20 @@ const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const PORT           = process.env.PORT           || 3000;
 const GRUPOS_IDS     = (process.env.GRUPOS_IDS || "").split(",").map(g => g.trim()).filter(Boolean);
 const AUTH_FOLDER    = "./auth_info";
+
+// ── Backup da sessão do WhatsApp no GitHub (repo PRIVADO) ────────────────
+// Disco do Render free tier é efêmero: toda vez que o serviço reinicia
+// (deploy, sleep/wake, crash) a pasta auth_info é apagada e seria preciso
+// escanear o QR code de novo. Pra permitir que esse serviço também possa
+// dormir no futuro sem perder a sessão, fazemos backup/restore via GitHub.
+const GITHUB_TOKEN         = process.env.GITHUB_TOKEN || "";
+const GITHUB_BACKUP_REPO   = process.env.GITHUB_BACKUP_REPO   || "Fred-Alexandrino/wppconnect-auth-backup";
+const GITHUB_BACKUP_PATH   = process.env.GITHUB_BACKUP_PATH   || "auth_info_backup.json";
+const GITHUB_BACKUP_BRANCH = process.env.GITHUB_BACKUP_BRANCH || "main";
+const BACKUP_HABILITADO    = !!GITHUB_TOKEN;
+const DEBOUNCE_BACKUP_MS   = 45000; // agrupa varias creds.update seguidas num so commit
+
+let backupTimer = null;
 
 let qrCodeAtual   = null;
 let statusConexao = "desconectado";
@@ -113,8 +128,97 @@ async function alertarStatusConexao(status, detalhe = "") {
   }
 }
 
+// ── Agenda um backup (debounced) apos creds.update ───────────────────────
+function agendarBackupAuth() {
+  if (!BACKUP_HABILITADO) return;
+  if (backupTimer) clearTimeout(backupTimer);
+  backupTimer = setTimeout(() => {
+    backupTimer = null;
+    fazerBackupAuth().catch(err => console.error("⚠️  [Backup Auth] Falha:", err.message));
+  }, DEBOUNCE_BACKUP_MS);
+}
+
+// ── Empacota todos os arquivos de auth_info num unico JSON e sobe pro GitHub
+async function fazerBackupAuth() {
+  if (!BACKUP_HABILITADO) return;
+  if (!fs.existsSync(AUTH_FOLDER)) return;
+
+  const arquivos = fs.readdirSync(AUTH_FOLDER).filter(
+    f => fs.statSync(path.join(AUTH_FOLDER, f)).isFile()
+  );
+  if (arquivos.length === 0) return;
+
+  const pacote = {};
+  for (const nome of arquivos) {
+    pacote[nome] = fs.readFileSync(path.join(AUTH_FOLDER, nome)).toString("base64");
+  }
+
+  const conteudoB64 = Buffer.from(JSON.stringify(pacote), "utf-8").toString("base64");
+  const apiUrl = `https://api.github.com/repos/${GITHUB_BACKUP_REPO}/contents/${GITHUB_BACKUP_PATH}`;
+  const headers = {
+    Authorization: `token ${GITHUB_TOKEN}`,
+    Accept: "application/vnd.github+json",
+  };
+
+  let shaAtual = null;
+  try {
+    const atual = await axios.get(apiUrl, { headers, params: { ref: GITHUB_BACKUP_BRANCH } });
+    shaAtual = atual.data.sha;
+  } catch (e) {
+    if (e.response?.status !== 404) throw e; // 404 = ainda nao existe backup, tudo bem
+  }
+
+  await axios.put(apiUrl, {
+    message: `backup auth_info [skip ci] ${new Date().toISOString()}`,
+    content: conteudoB64,
+    branch: GITHUB_BACKUP_BRANCH,
+    ...(shaAtual ? { sha: shaAtual } : {}),
+  }, { headers });
+
+  console.log(`💾 [Backup Auth] ${arquivos.length} arquivo(s) salvos no GitHub (${GITHUB_BACKUP_REPO})`);
+}
+
+// ── Restaura auth_info do GitHub, se nao houver sessao local ainda ───────
+async function restaurarAuthDoGitHub() {
+  if (!BACKUP_HABILITADO) {
+    console.log("ℹ️  [Restore Auth] GITHUB_TOKEN não configurado — backup/restore desativado");
+    return false;
+  }
+
+  const jaTemSessao = fs.existsSync(AUTH_FOLDER) &&
+    fs.readdirSync(AUTH_FOLDER).some(f => f.includes("creds"));
+  if (jaTemSessao) return false; // sessao local ja existe, nao sobrescreve
+
+  const apiUrl = `https://api.github.com/repos/${GITHUB_BACKUP_REPO}/contents/${GITHUB_BACKUP_PATH}`;
+  const headers = {
+    Authorization: `token ${GITHUB_TOKEN}`,
+    Accept: "application/vnd.github+json",
+  };
+
+  try {
+    const resp = await axios.get(apiUrl, { headers, params: { ref: GITHUB_BACKUP_BRANCH } });
+    const pacote = JSON.parse(Buffer.from(resp.data.content, "base64").toString("utf-8"));
+
+    fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+    for (const [nome, conteudoB64] of Object.entries(pacote)) {
+      fs.writeFileSync(path.join(AUTH_FOLDER, nome), Buffer.from(conteudoB64, "base64"));
+    }
+    console.log(`♻️  [Restore Auth] ${Object.keys(pacote).length} arquivo(s) restaurados do GitHub — sessão recuperada sem precisar de QR`);
+    return true;
+  } catch (e) {
+    if (e.response?.status === 404) {
+      console.log("ℹ️  [Restore Auth] Nenhum backup encontrado no GitHub — sessão nova, QR necessário");
+    } else {
+      console.error("⚠️  [Restore Auth] Falha ao restaurar:", e.message);
+    }
+    return false;
+  }
+}
+
 // ── Inicia conexão com WhatsApp ──────────────────────────────────────────
 async function conectar() {
+  await restaurarAuthDoGitHub();
+
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
   const { version } = await fetchLatestBaileysVersion();
 
@@ -129,7 +233,10 @@ async function conectar() {
     markOnlineOnConnect: false,
   });
 
-  sock.ev.on("creds.update", saveCreds);
+  sock.ev.on("creds.update", async () => {
+    await saveCreds();
+    agendarBackupAuth();
+  });
 
   let estavaDesconectado = false;
   let timerAlertaDesconexao = null;
@@ -301,6 +408,29 @@ async function buscarHistorico(grupoId, sinceTimestamp, limit) {
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", wpp: statusConexao });
+});
+
+/**
+ * POST /api/backup-auth
+ * Dispara backup manual da sessão pro GitHub (fora do debounce automático).
+ * Útil pra validar a persistência sem esperar o próximo creds.update.
+ */
+app.post("/api/backup-auth", async (req, res) => {
+  if (WEBHOOK_SECRET) {
+    const secret = req.headers["x-webhook-secret"] || "";
+    if (secret !== WEBHOOK_SECRET) {
+      return res.status(401).json({ ok: false, erro: "não autorizado" });
+    }
+  }
+  if (!BACKUP_HABILITADO) {
+    return res.status(400).json({ ok: false, erro: "GITHUB_TOKEN não configurado no servidor" });
+  }
+  try {
+    await fazerBackupAuth();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
 app.get("/status", (req, res) => {
