@@ -49,6 +49,31 @@ let qrCodeAtual   = null;
 let statusConexao = "desconectado";
 let sock          = null;
 
+// ── Grupos permitidos pra captura de fotos de zeladoria ──────────────────
+// Só os mesmos grupos usados nos comunicados (mapeamento grupo_usina da
+// aba _Sistema) devem ter fotos baixadas/encaminhadas — os demais grupos
+// monitorados (ex.: rondas/ocorrências) são só pra texto, nunca pra
+// fotos. A lista vem do backend (fonte única de verdade, editável por
+// Fred na planilha sem precisar de deploy) e é atualizada periodicamente.
+let gruposFotosPermitidos = new Set();
+
+async function atualizarGruposFotosPermitidos() {
+  if (!SERVIDOR_URL) return;
+  try {
+    const headers = {};
+    if (WEBHOOK_SECRET) headers["X-Webhook-Secret"] = WEBHOOK_SECRET;
+    const resp = await axios.get(`${SERVIDOR_URL}/grupos-fotos-permitidos`, { headers, timeout: 15000 });
+    if (resp.data?.ok && Array.isArray(resp.data.grupos)) {
+      gruposFotosPermitidos = new Set(resp.data.grupos);
+      console.log(`✅ [Fotos Zeladoria] Lista de grupos permitidos atualizada (${gruposFotosPermitidos.size} grupos)`);
+    }
+  } catch (err) {
+    console.error(`⚠️ [Fotos Zeladoria] Falha ao atualizar lista de grupos permitidos: ${err.message}`);
+    // mantém a última lista conhecida (fail-safe: melhor não capturar
+    // fotos novas do que capturar de um grupo errado por lista desatualizada)
+  }
+}
+
 // ── Extrai texto de qualquer tipo de mensagem Baileys ────────────────────
 function extrairTexto(msg) {
   if (!msg?.message) return "";
@@ -370,7 +395,10 @@ async function conectar() {
         // ao fluxo de texto de ronda/falha, não substitui ele. Não usa
         // await aqui de propósito, pra não atrasar o processamento das
         // outras mensagens da leva enquanto baixa/envia a imagem.
-        if (msg.message?.imageMessage) {
+        // Só captura de grupos que são canal de fotos de zeladoria (mesmos
+        // grupos dos comunicados) — grupos monitorados só pra rondas/
+        // ocorrências nunca devem ter fotos baixadas.
+        if (msg.message?.imageMessage && gruposFotosPermitidos.has(grupoId)) {
           const legendaFoto = msg.message.imageMessage.caption || "";
           encaminharFotoParaServidor(grupoId, msg, legendaFoto)
             .then(resultado => {
@@ -657,4 +685,6 @@ app.listen(PORT, () => {
   console.log(`📡 Modo 1 (tempo real): sempre ativo ao conectar`);
   console.log(`🔍 Modo 2 (histórico):  disponível via GET /api/messages/:grupoId`);
   conectar().catch(err => console.error("❌ Erro ao conectar:", err));
+  atualizarGruposFotosPermitidos();
+  setInterval(atualizarGruposFotosPermitidos, 10 * 60 * 1000); // a cada 10 min
 });
