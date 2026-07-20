@@ -14,6 +14,7 @@ const {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
+  downloadMediaMessage,
 } = require("@whiskeysockets/baileys");
 const express = require("express");
 const axios   = require("axios");
@@ -116,7 +117,47 @@ async function encaminharParaServidor(grupoId, texto) {
   return null;
 }
 
-// ── Alerta imediato pro dashboard quando a conexão muda de estado ───────
+// ── Encaminha uma foto (imagem) para o app.py, pro controle de zeladoria ──
+// Diferente de encaminharParaServidor: baixa a mídia (Baileys não entrega
+// o binário direto no evento, só a referência), converte pra base64 e
+// manda pra rota dedicada. Payload maior que texto, por isso timeout mais
+// alto e menos tentativas de retry (não vale a pena reter o processo de
+// mensagens em tempo real esperando).
+async function encaminharFotoParaServidor(grupoId, msg, legenda) {
+  if (!SERVIDOR_URL) return null;
+
+  let buffer;
+  try {
+    buffer = await downloadMediaMessage(msg, "buffer", {});
+  } catch (err) {
+    console.error(`❌ [Foto Zeladoria] Falha ao baixar mídia de ${grupoId}: ${err.message}`);
+    return null;
+  }
+
+  const mimeType = msg.message?.imageMessage?.mimetype || "image/jpeg";
+  const imagemBase64 = buffer.toString("base64");
+
+  const headers = { "Content-Type": "application/json" };
+  if (WEBHOOK_SECRET) headers["X-Webhook-Secret"] = WEBHOOK_SECRET;
+
+  const payload = { grupoId, imagemBase64, mimeType, legenda: legenda || "" };
+
+  const esperas = [3000, 8000];
+  for (let tentativa = 0; tentativa <= esperas.length; tentativa++) {
+    try {
+      const resp = await axios.post(`${SERVIDOR_URL}/webhook-foto-zeladoria`, payload, { headers, timeout: 30000 });
+      return resp.data;
+    } catch (err) {
+      console.error(`❌ [Foto Zeladoria] Tentativa ${tentativa + 1} falhou: ${err.message}`);
+      if (tentativa < esperas.length) {
+        await new Promise(r => setTimeout(r, esperas[tentativa]));
+      }
+    }
+  }
+  return null;
+}
+
+
 async function alertarStatusConexao(status, detalhe = "") {
   if (!SERVIDOR_URL) return;
   try {
@@ -323,6 +364,23 @@ async function conectar() {
         if (GRUPOS_IDS.length > 0) {
           const permitido = GRUPOS_IDS.some(g => grupoId.includes(g));
           if (!permitido) continue;
+        }
+
+        // Fotos (zeladoria: vegetação/sujidade) — encaminhadas em paralelo
+        // ao fluxo de texto de ronda/falha, não substitui ele. Não usa
+        // await aqui de propósito, pra não atrasar o processamento das
+        // outras mensagens da leva enquanto baixa/envia a imagem.
+        if (msg.message?.imageMessage) {
+          const legendaFoto = msg.message.imageMessage.caption || "";
+          encaminharFotoParaServidor(grupoId, msg, legendaFoto)
+            .then(resultado => {
+              if (resultado === null) {
+                console.error(`   ❌ [Foto Zeladoria] Falha ao encaminhar foto de ${grupoId}`);
+              } else {
+                console.log(`   📸 [Foto Zeladoria] Foto de ${grupoId} registrada (semana ${resultado.semana || "?"})`);
+              }
+            })
+            .catch(err => console.error(`❌ [Foto Zeladoria] Erro inesperado: ${err.message}`));
         }
 
         const texto = extrairTexto(msg);
