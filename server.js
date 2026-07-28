@@ -28,6 +28,32 @@ const SERVIDOR_URL   = process.env.SERVIDOR_URL   || "";
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const PORT           = process.env.PORT           || 3000;
 const GRUPOS_IDS     = (process.env.GRUPOS_IDS || "").split(",").map(g => g.trim()).filter(Boolean);
+
+// Grupos mapeados pro resumo diário/semanal (Gestão O&M) — TODA mensagem
+// desses grupos é capturada e arquivada, independente de ser relevante
+// pra detecção de falha ou não. Implementado em 27/07/2026 a pedido do
+// Fred, pra permitir que o resumo diário também traga um apanhado do
+// que foi tratado em cada grupo, não só o que já era parseado (status
+// de OS). Mapeamento de ID confirmado direto no servidor na mesma data.
+const GRUPOS_RESUMO_DIARIO = {
+  "120363423233716775": "[O&M] - Grid Co. | Renogrid",
+  "120363426381032089": "[O&M] - Grid Co. | Alves Lima",
+  "120363427259899891": "[O&M] - Grid Co. | Sal Energia",
+  "120363423844956611": "[O&M] - Grid Co. | GD Energy",
+  "120363402559504115": "[O&M] - Grid Co. | 2C",
+  "120363424804307945": "Thopen & GridCo. | Usinas FRED ALEXANDRINO",
+  "120363405244065477": "Equipe Bonfim/Morada Nova/Quixadá",
+  "120363426886851537": "Equipe Nova Xavantina",
+  "120363425342949474": "Equipe Araputanga/Poconé",
+  "120363422795399103": "Equipe Ibaté/Boa Esperança",
+  "120363426700120222": "Equipe Colíder - Grid Co.",
+  "120363428268426406": "Equipe Matão/Topázio",
+  "120363427839577268": "Equipe Elias Fausto",
+  "120363403858325184": "Equipe Sete Lagoas",
+  "120363406329162612": "Equipe Nobres",
+  "120363410081447469": "Equipe Crateús",
+  "120363405111083249": "Equipe Crateús",
+};
 const AUTH_FOLDER    = "./auth_info";
 
 // ── Backup da sessão do WhatsApp no GitHub (repo PRIVADO) ────────────────
@@ -71,6 +97,24 @@ function ehMensagemRelevante(texto) {
     /·\s*(Problema|Descrição|Impacto)/i.test(texto) ||
     /ATUALIZA[CÇ][AÃ]O\s+(OS|ATIVIDADE)/i.test(texto)
   );
+}
+
+// ── Captura TODA mensagem dos grupos mapeados pro resumo diário/semanal
+//    (Gestão O&M) — independente de ser "relevante" pra detecção de
+//    falha. Fire-and-forget (não trava o fluxo principal se falhar; só
+//    loga o erro), pois isso é arquivamento, não algo crítico como
+//    registrar uma falha nova. ─────────────────────────────────────────
+async function capturarMensagemParaResumo(grupoId, nomeGrupo, remetente, texto) {
+  if (!SERVIDOR_URL || !texto) return;
+  const headers = { "Content-Type": "application/json" };
+  if (WEBHOOK_SECRET) headers["X-Webhook-Secret"] = WEBHOOK_SECRET;
+  try {
+    await axios.post(`${SERVIDOR_URL}/capturar-mensagem-grupo`, {
+      grupoId, nomeGrupo, remetente, texto,
+    }, { headers, timeout: 10000 });
+  } catch (err) {
+    console.error(`⚠️ [Captura resumo] Falha ao arquivar mensagem de ${nomeGrupo}: ${err.message}`);
+  }
 }
 
 // ── Encaminha mensagem para o app.py (webhook), com retry + alerta ──────
@@ -318,13 +362,25 @@ async function conectar() {
         const grupoId = msg.key.remoteJid;
         if (!grupoId.endsWith("@g.us")) continue;
 
+        const grupoIdNumerico = grupoId.replace("@g.us", "");
+        const textoBruto = extrairTexto(msg);
+
+        // Captura pro resumo diário/semanal — roda pra QUALQUER mensagem
+        // dos grupos mapeados, independente de ser relevante pra
+        // detecção de falha ou não, e independente do filtro GRUPOS_IDS
+        // abaixo (que é só pro fluxo de falha/ronda).
+        if (textoBruto && GRUPOS_RESUMO_DIARIO[grupoIdNumerico]) {
+          const remetente = msg.pushName || msg.key.participant || "desconhecido";
+          capturarMensagemParaResumo(grupoId, GRUPOS_RESUMO_DIARIO[grupoIdNumerico], remetente, textoBruto);
+        }
+
         // Filtra grupos se configurado
         if (GRUPOS_IDS.length > 0) {
           const permitido = GRUPOS_IDS.some(g => grupoId.includes(g));
           if (!permitido) continue;
         }
 
-        const texto = extrairTexto(msg);
+        const texto = textoBruto;
         if (!texto || !ehMensagemRelevante(texto)) continue;
 
         console.log(`\n📨 [Tempo real] Falha recebida de ${grupoId}`);
