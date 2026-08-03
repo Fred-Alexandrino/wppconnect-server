@@ -289,6 +289,7 @@ async function conectar() {
   });
 
   let estavaDesconectado = false;
+  let alertaQrJaEnviado = false;
   let timerAlertaDesconexao = null;
   const JANELA_GRACA_MS = 25000; // 25s — tempo pra reconexão automática
 
@@ -301,7 +302,16 @@ async function conectar() {
           qrCodeAtual   = url;
           statusConexao = "aguardando_qr";
           console.log("📱 QR Code gerado — acesse /qr para escanear");
-          alertarStatusConexao("aguardando_qr");
+          // O Baileys gera um QR novo a cada ~20-60s enquanto não é
+          // escaneado (comportamento padrão do WhatsApp Web). Sem essa
+          // trava, cada refresh de QR disparava um push idêntico —
+          // relatado pelo Fred em 03/08/2026 recebendo a notificação
+          // "o tempo todo". Agora só alerta na primeira vez do episódio;
+          // reseta quando reconecta, pra um episódio futuro alertar de novo.
+          if (!alertaQrJaEnviado) {
+            alertaQrJaEnviado = true;
+            alertarStatusConexao("aguardando_qr");
+          }
         }
       });
     }
@@ -309,6 +319,7 @@ async function conectar() {
     if (connection === "open") {
       statusConexao = "conectado";
       qrCodeAtual   = null;
+      alertaQrJaEnviado = false;
       console.log("✅ WhatsApp conectado!");
       console.log("📡 Monitoramento em tempo real ATIVO");
       // reconectou dentro da janela de graça — cancela o alerta pendente,
