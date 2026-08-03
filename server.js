@@ -37,13 +37,16 @@ const GRUPOS_IDS     = (process.env.GRUPOS_IDS || "").split(",").map(g => g.trim
 // de OS). Mapeamento de ID confirmado direto no servidor na mesma data.
 const GRUPOS_RESUMO_DIARIO = {
   "120363423233716775": "[O&M] - Grid Co. | Renogrid",
+  "120363423427343356": "[O&M] - Grid Co. | Thopen",
   "120363426381032089": "[O&M] - Grid Co. | Alves Lima",
   "120363427259899891": "[O&M] - Grid Co. | Sal Energia",
   "120363423844956611": "[O&M] - Grid Co. | GD Energy",
   "120363402559504115": "[O&M] - Grid Co. | 2C",
   "120363424804307945": "Thopen & GridCo. | Usinas FRED ALEXANDRINO",
-  "120363405244065477": "Equipe Bonfim/Morada Nova/Quixadá",
+  "120363406191445169": "O&M - San. Bárb./Pirac. - SP LESTE 03",
+  "120363405244065477": "O&M CE Sítio Bonfim - Grid/Thopen",
   "120363426886851537": "Equipe Nova Xavantina",
+  "120363406919935108": "Equipe Nova Xavantina 1 e 2",
   "120363425342949474": "Equipe Araputanga/Poconé",
   "120363422795399103": "Equipe Ibaté/Boa Esperança",
   "120363426700120222": "Equipe Colíder - Grid Co.",
@@ -51,8 +54,12 @@ const GRUPOS_RESUMO_DIARIO = {
   "120363427839577268": "Equipe Elias Fausto",
   "120363403858325184": "Equipe Sete Lagoas",
   "120363406329162612": "Equipe Nobres",
-  "120363410081447469": "Equipe Crateús",
   "120363405111083249": "Equipe Crateús",
+  "120363421162420788": "COS — Técnicos O&M Centro-Oeste",
+  "120363425837962709": "COS — Técnicos O&M Sul",
+  "120363402176878100": "COS — Técnicos O&M Nordeste",
+  "120363423533840348": "COS — Técnicos O&M Sudeste",
+  "120363421052607450": "COS — Técnicos O&M Norte",
 };
 const AUTH_FOLDER    = "./auth_info";
 
