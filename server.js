@@ -82,6 +82,22 @@ let qrCodeAtual   = null;
 let statusConexao = "desconectado";
 let sock          = null;
 
+// ── Controle de alertas de conexão (escopo de MÓDULO, não de conectar()) ──
+// Precisa sobreviver a reconexões automáticas. Antes esse estado ficava
+// dentro de conectar(), então cada reconexão (que acontece com frequência,
+// mesmo sem problema real) recriava as variáveis do zero — e um blip que
+// se resolvia sozinho em segundos podia gerar um novo alerta de QR/queda
+// a cada ciclo, mesmo com a conexão ok. Relatado pelo Fred em 04/08/2026
+// recebendo "WhatsApp precisa de novo QR Code" repetidamente sem motivo
+// real. Agora, além de sobreviver a reconexões, tem um cooldown mínimo
+// entre alertas do mesmo tipo.
+let estavaDesconectado = false;
+let timerAlertaDesconexao = null;
+let timerAlertaQr = null;
+let ultimoAlertaQrEnviadoEm = 0;
+const JANELA_GRACA_MS = 25000; // 25s — tempo pra reconexão automática se resolver sozinha
+const COOLDOWN_ALERTA_QR_MS = 10 * 60 * 1000; // 10 min — evita repetir alerta de QR a cada refresh/reconexão
+
 // ── Extrai texto de qualquer tipo de mensagem Baileys ────────────────────
 function extrairTexto(msg) {
   if (!msg?.message) return "";
@@ -289,11 +305,6 @@ async function conectar() {
     agendarBackupAuth();
   });
 
-  let estavaDesconectado = false;
-  let alertaQrJaEnviado = false;
-  let timerAlertaDesconexao = null;
-  const JANELA_GRACA_MS = 25000; // 25s — tempo pra reconexão automática
-
   // ── Monitora mudanças de conexão ───────────────────────────────────────
   sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
     if (qr) {
@@ -304,14 +315,21 @@ async function conectar() {
           statusConexao = "aguardando_qr";
           console.log("📱 QR Code gerado — acesse /qr para escanear");
           // O Baileys gera um QR novo a cada ~20-60s enquanto não é
-          // escaneado (comportamento padrão do WhatsApp Web). Sem essa
-          // trava, cada refresh de QR disparava um push idêntico —
-          // relatado pelo Fred em 03/08/2026 recebendo a notificação
-          // "o tempo todo". Agora só alerta na primeira vez do episódio;
-          // reseta quando reconecta, pra um episódio futuro alertar de novo.
-          if (!alertaQrJaEnviado) {
-            alertaQrJaEnviado = true;
-            alertarStatusConexao("aguardando_qr");
+          // escaneado, e uma reconexão automática também pode passar por
+          // um estado "aguardando_qr" bem breve antes de conectar sozinha
+          // de verdade. Por isso só alerta depois de uma janela de graça
+          // (dá tempo de resolver sozinho, igual já era feito pra queda de
+          // conexão) E com um cooldown mínimo entre alertas — evita tanto
+          // o refresh do QR quanto reconexões automáticas gerando push
+          // repetido (relatado pelo Fred em 04/08/2026).
+          if (!timerAlertaQr && Date.now() - ultimoAlertaQrEnviadoEm > COOLDOWN_ALERTA_QR_MS) {
+            timerAlertaQr = setTimeout(() => {
+              timerAlertaQr = null;
+              if (statusConexao === "aguardando_qr") {
+                ultimoAlertaQrEnviadoEm = Date.now();
+                alertarStatusConexao("aguardando_qr");
+              }
+            }, JANELA_GRACA_MS);
           }
         }
       });
@@ -320,7 +338,10 @@ async function conectar() {
     if (connection === "open") {
       statusConexao = "conectado";
       qrCodeAtual   = null;
-      alertaQrJaEnviado = false;
+      if (timerAlertaQr) {
+        clearTimeout(timerAlertaQr);
+        timerAlertaQr = null;
+      }
       console.log("✅ WhatsApp conectado!");
       console.log("📡 Monitoramento em tempo real ATIVO");
       // reconectou dentro da janela de graça — cancela o alerta pendente,
