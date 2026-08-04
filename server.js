@@ -46,7 +46,6 @@ const GRUPOS_RESUMO_DIARIO = {
   "120363406191445169": "O&M - San. Bárb./Pirac. - SP LESTE 03",
   "120363405244065477": "O&M CE Sítio Bonfim - Grid/Thopen",
   "120363426886851537": "Equipe Nova Xavantina",
-  "120363406919935108": "Equipe Nova Xavantina 1 e 2",
   "120363425342949474": "Equipe Araputanga/Poconé",
   "120363422795399103": "Equipe Ibaté/Boa Esperança",
   "120363426700120222": "Equipe Colíder - Grid Co.",
@@ -55,11 +54,13 @@ const GRUPOS_RESUMO_DIARIO = {
   "120363403858325184": "Equipe Sete Lagoas",
   "120363406329162612": "Equipe Nobres",
   "120363405111083249": "Equipe Crateús",
+  "120363410081447469": "Equipe Crateús",
   "120363421162420788": "COS — Técnicos O&M Centro-Oeste",
   "120363425837962709": "COS — Técnicos O&M Sul",
   "120363402176878100": "COS — Técnicos O&M Nordeste",
   "120363423533840348": "COS — Técnicos O&M Sudeste",
   "120363421052607450": "COS — Técnicos O&M Norte",
+  "120363428178674382": "Equipe - Aquiraz/Cascavel",
 };
 const AUTH_FOLDER    = "./auth_info";
 
