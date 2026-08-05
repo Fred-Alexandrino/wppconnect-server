@@ -91,7 +91,7 @@ let sock          = null;
 // recebendo "WhatsApp precisa de novo QR Code" repetidamente sem motivo
 // real. Agora, além de sobreviver a reconexões, tem um cooldown mínimo
 // entre alertas do mesmo tipo.
-let estavaDesconectado = false;
+let alertaDesconexaoEnviado = false;
 let timerAlertaDesconexao = null;
 let timerAlertaQr = null;
 let ultimoAlertaQrEnviadoEm = 0;
@@ -354,9 +354,17 @@ async function conectar() {
         clearTimeout(timerAlertaDesconexao);
         timerAlertaDesconexao = null;
       }
-      if (estavaDesconectado) {
+      // só avisa "reconectado" se um alerta de "desconectado" tiver
+      // sido REALMENTE enviado antes — não basta ter havido um evento de
+      // close, já que a maioria se resolve dentro da janela de graça sem
+      // nunca virar alerta nenhum. Sem essa distinção, toda oscilação
+      // breve (close→open em poucos segundos, comum e inofensiva) gerava
+      // um "reconectado" solto, sem nenhum "desconectado" correspondente
+      // — relatado pelo Fred em 05/08/2026 recebendo "reconectado" 3x
+      // seguidas com o WhatsApp nunca tendo saído do ar de verdade.
+      if (alertaDesconexaoEnviado) {
         alertarStatusConexao("reconectado");
-        estavaDesconectado = false;
+        alertaDesconexaoEnviado = false;
       }
     }
 
@@ -365,7 +373,6 @@ async function conectar() {
       const reconectar = codigo !== DisconnectReason.loggedOut;
       console.log(`⚠️  Conexão encerrada (código ${codigo}). Reconectando: ${reconectar}`);
       statusConexao = "desconectado";
-      estavaDesconectado = true;
 
       // só alerta se a conexão continuar caída depois da janela de graça —
       // dá tempo pro Baileys reconectar sozinho antes de incomodar o Fred
@@ -373,6 +380,7 @@ async function conectar() {
       if (timerAlertaDesconexao) clearTimeout(timerAlertaDesconexao);
       timerAlertaDesconexao = setTimeout(() => {
         if (statusConexao === "desconectado") {
+          alertaDesconexaoEnviado = true;
           alertarStatusConexao("desconectado", `código ${codigo}, sem reconectar após ${JANELA_GRACA_MS/1000}s`);
         }
         timerAlertaDesconexao = null;
