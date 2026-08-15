@@ -81,6 +81,7 @@ let backupTimer = null;
 let qrCodeAtual   = null;
 let statusConexao = "desconectado";
 let sock          = null;
+let desconectadoDesde = null; // timestamp de quando a conexão caiu, usado pelo vigia abaixo
 
 // ── Controle de alertas de conexão (escopo de MÓDULO, não de conectar()) ──
 // Precisa sobreviver a reconexões automáticas. Antes esse estado ficava
@@ -338,6 +339,7 @@ async function conectar() {
     if (connection === "open") {
       statusConexao = "conectado";
       qrCodeAtual   = null;
+      desconectadoDesde = null;
       if (timerAlertaQr) {
         clearTimeout(timerAlertaQr);
         timerAlertaQr = null;
@@ -373,6 +375,7 @@ async function conectar() {
       const reconectar = codigo !== DisconnectReason.loggedOut;
       console.log(`⚠️  Conexão encerrada (código ${codigo}). Reconectando: ${reconectar}`);
       statusConexao = "desconectado";
+      if (!desconectadoDesde) desconectadoDesde = Date.now();
 
       // só alerta se a conexão continuar caída depois da janela de graça —
       // dá tempo pro Baileys reconectar sozinho antes de incomodar o Fred
@@ -729,6 +732,25 @@ app.post("/api/processar", async (req, res) => {
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
+
+// ── Vigia de reconexão forçada ──────────────────────────────────────────────
+// O Baileys já tenta reconectar sozinho a cada queda (ver connection.update
+// acima), mas em alguns casos esse loop pode ficar preso tentando repetidas
+// vezes sem nunca completar (sessão travada, erro não tratado dentro de
+// conectar() antes do socket terminar de montar, etc.) — foi exatamente
+// isso que aconteceu em 15/08/2026: o WhatsApp ficou "desconectado" por
+// horas até um reinício manual do serviço resolver. Esse vigia detecta esse
+// cenário (desconectado continuamente por tempo demais, mesmo com o loop de
+// reconexão normal rodando) e força uma reconexão do zero automaticamente,
+// sem precisar reiniciar o processo inteiro nem depender de alguém notar.
+const VIGIA_LIMIAR_MS = 3 * 60 * 1000; // 3min continuamente desconectado
+setInterval(() => {
+  if (statusConexao !== "conectado" && desconectadoDesde && (Date.now() - desconectadoDesde) > VIGIA_LIMIAR_MS) {
+    console.log(`🔧 [Vigia] Desconectado há mais de ${VIGIA_LIMIAR_MS / 60000}min — forçando reconexão do zero.`);
+    desconectadoDesde = Date.now(); // reseta a janela pra não disparar de novo a cada 60s
+    conectar().catch(err => console.error("❌ [Vigia] Erro ao forçar reconexão:", err));
+  }
+}, 60 * 1000); // checa a cada 1min
 
 // ── Inicia ─────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
