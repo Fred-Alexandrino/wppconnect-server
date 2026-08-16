@@ -604,12 +604,25 @@ app.post("/api/enviar-mensagem", async (req, res) => {
   if (!grupoId || !texto) {
     return res.status(400).json({ ok: false, erro: "grupoId e texto são obrigatórios" });
   }
-  try {
-    await sock.sendMessage(grupoId, { text: texto });
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ ok: false, erro: err.message });
+  // Retry com backoff — antes era 1 única tentativa; um soluço passageiro
+  // na rede do WhatsApp bem no instante do envio (ex.: ronda das 8h de
+  // 16/08/2026 que não chegou) derrubava a mensagem sem segunda chance.
+  // Mesmo padrão de resiliência já usado em encaminharParaServidor().
+  const esperas = [1500, 4000];
+  let ultimoErro = null;
+  for (let tentativa = 0; tentativa <= esperas.length; tentativa++) {
+    try {
+      await sock.sendMessage(grupoId, { text: texto });
+      return res.json({ ok: true, tentativas: tentativa + 1 });
+    } catch (err) {
+      ultimoErro = err;
+      console.error(`❌ [enviar-mensagem] Tentativa ${tentativa + 1} falhou: ${err.message}`);
+      if (tentativa < esperas.length) {
+        await new Promise(r => setTimeout(r, esperas[tentativa]));
+      }
+    }
   }
+  res.status(500).json({ ok: false, erro: ultimoErro?.message || "falha desconhecida", tentativas: esperas.length + 1 });
 });
 
 /**
