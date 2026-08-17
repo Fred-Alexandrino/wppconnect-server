@@ -82,6 +82,7 @@ let qrCodeAtual   = null;
 let statusConexao = "desconectado";
 let sock          = null;
 let desconectadoDesde = null; // timestamp de quando a conexão caiu, usado pelo vigia abaixo
+let conectando    = false; // trava de reentrância — ver nota no início de conectar()
 
 // ── Controle de alertas de conexão (escopo de MÓDULO, não de conectar()) ──
 // Precisa sobreviver a reconexões automáticas. Antes esse estado ficava
@@ -285,12 +286,41 @@ async function restaurarAuthDoGitHub() {
 
 // ── Inicia conexão com WhatsApp ──────────────────────────────────────────
 async function conectar() {
-  await restaurarAuthDoGitHub();
+  // TRAVA DE REENTRÂNCIA + FECHAMENTO DO SOCKET ANTIGO (adicionado
+  // 17/08/2026): conectar() podia ser chamada mais de uma vez em paralelo
+  // — pelo handler de "connection.update" (close → setTimeout(conectar,
+  // 5000)) e pelo Vigia (setInterval de 1min), sem nenhuma trava entre
+  // eles. Cada chamada cria um socket NOVO via makeWASocket() sem nunca
+  // fechar o socket antigo, então em janelas de instabilidade dava pra
+  // acabar com DUAS conexões WebSocket vivas usando a MESMA sessão ao
+  // mesmo tempo — o WhatsApp detecta isso como conflito e derruba com
+  // código 440 repetidamente (foi exatamente o padrão observado em
+  // 17/08/2026: ciclos de poucos segundos entre "conectado" e "encerrada
+  // código 440", até degenerar num código 405 persistente). Agora só uma
+  // chamada de conectar() roda por vez, e o socket anterior é fechado
+  // explicitamente antes de abrir um novo.
+  if (conectando) {
+    console.log("⏭️  [conectar] Já há uma conexão em andamento — ignorando chamada duplicada.");
+    return;
+  }
+  conectando = true;
+  try {
+    if (sock) {
+      try {
+        sock.ev.removeAllListeners();
+        sock.end(undefined);
+      } catch (err) {
+        console.log("⚠️  [conectar] Erro ao fechar socket anterior (ignorado):", err.message);
+      }
+      sock = null;
+    }
 
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
-  const { version } = await fetchLatestBaileysVersion();
+    await restaurarAuthDoGitHub();
 
-  sock = makeWASocket({
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
+    const { version } = await fetchLatestBaileysVersion();
+
+    sock = makeWASocket({
     version,
     auth: state,
     logger: pino({ level: "silent" }),
@@ -448,6 +478,12 @@ async function conectar() {
       }
     }
   });
+  } catch (err) {
+    console.error("❌ [conectar] Erro ao estabelecer conexão:", err.message);
+    throw err;
+  } finally {
+    conectando = false;
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
