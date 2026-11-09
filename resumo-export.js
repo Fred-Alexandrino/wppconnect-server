@@ -34,6 +34,8 @@ const EXTRAS_PADRAO = {
 };
 const EXTRAS = Object.assign({}, EXTRAS_PADRAO, json(process.env.GRUPOS_RESUMO_EXTRA, {}));
 const TIPOS = json(process.env.GRUPOS_TIPO, {});
+// Grupos que NUNCA entram no resumo (têm usinas fora do mapeamento do Fred)
+const EXCLUIR = new Set(["120363423427343356" /* [O&M] - Grid Co. | Thopen */].concat((process.env.GRUPOS_EXCLUIR || "").split(",").map((x) => x.trim()).filter(Boolean)));
 
 const nomesCache = new Map();
 let nomesEm = 0, nomesBuscando = false;
@@ -114,7 +116,7 @@ function tipoDe(nome) {
 function gruposExportados(msgs) {
   const ids = new Set([...Object.keys(ctx.mapeados), ...Object.keys(EXTRAS)]);
   if (process.env.RESUMO_TODOS === "1") msgs.forEach((m) => ids.add(m.g));
-  return [...ids];
+  return [...ids].filter((id) => !EXCLUIR.has(id));
 }
 
 function gerarTexto(agoraS) {
