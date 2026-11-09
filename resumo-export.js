@@ -35,7 +35,12 @@ const EXTRAS_PADRAO = {
 const EXTRAS = Object.assign({}, EXTRAS_PADRAO, json(process.env.GRUPOS_RESUMO_EXTRA, {}));
 const TIPOS = json(process.env.GRUPOS_TIPO, {});
 // Grupos que NUNCA entram no resumo (têm usinas fora do mapeamento do Fred)
-const EXCLUIR = new Set(["120363423427343356" /* [O&M] - Grid Co. | Thopen */].concat((process.env.GRUPOS_EXCLUIR || "").split(",").map((x) => x.trim()).filter(Boolean)));
+const EXCLUIR = new Set([
+  "120363423427343356", // [O&M] - Grid Co. | Thopen
+  "120363426381032089", // [O&M] - Grid Co. | Alves Lima
+  "120363427259899891", // [O&M] - Grid Co. | Sal Energia
+  "120363423844956611", // [O&M] - Grid Co. | GD Energy
+].concat((process.env.GRUPOS_EXCLUIR || "").split(",").map((x) => x.trim()).filter(Boolean)));
 
 const nomesCache = new Map();
 let nomesEm = 0, nomesBuscando = false;
