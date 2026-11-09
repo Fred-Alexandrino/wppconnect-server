@@ -22,7 +22,17 @@ const RETENCAO_S = 8 * 24 * 3600;
 const TZ = "America/Fortaleza";
 
 function json(env, padrao) { try { return env ? JSON.parse(env) : padrao; } catch (_) { return padrao; } }
-const EXTRAS = json(process.env.GRUPOS_RESUMO_EXTRA, {});
+// Grupos além dos mapeados em server.js (IDs confirmados em 09/11/2026)
+const EXTRAS_PADRAO = {
+  "120363430482583512": "Equipe Tupi Paulista/St Anast/Alv. Machado",
+  "120363431601050989": "Equipe Ipixuna - 2C",
+  "120363410279004309": "Equipe Coração/Guatambu",
+  "120363431235680039": "Equipe Alto Parana/Paranavaí",
+  "120363430888041572": "Equipe União 2C",
+  "120363432086889798": "Equipe Colorado/Mandaguaçu/Sarandi",
+  "120363413986264625": "Equipe Céu Azul/Assis Chat.",
+};
+const EXTRAS = Object.assign({}, EXTRAS_PADRAO, json(process.env.GRUPOS_RESUMO_EXTRA, {}));
 const TIPOS = json(process.env.GRUPOS_TIPO, {});
 
 const nomesCache = new Map();
