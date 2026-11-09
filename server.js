@@ -21,6 +21,7 @@ const pino    = require("pino");
 const fs      = require("fs");
 const path    = require("path");
 
+const resumoExport = require("./resumo-export");
 const app = express();
 app.use(express.json({ limit: "20mb" }));
 
@@ -437,6 +438,7 @@ async function conectar() {
     if (type !== "notify") return;
 
     for (const msg of messages) {
+      resumoExport.registrar(msg); // arquivo p/ resumo (inclui mensagens suas; não afeta o fluxo abaixo)
       try {
         if (msg.key.fromMe) continue;
 
@@ -547,6 +549,8 @@ async function buscarHistorico(grupoId, sinceTimestamp, limit) {
 }
 
 // ── Endpoints ─────────────────────────────────────────────────────────────
+
+resumoExport.registrarRotas(app, { getSock: () => sock, mapeados: GRUPOS_RESUMO_DIARIO, extrairTexto, secret: WEBHOOK_SECRET });
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", wpp: statusConexao });
