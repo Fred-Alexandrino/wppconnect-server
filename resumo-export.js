@@ -191,7 +191,7 @@ function registrarRotas(app, c) {
   app.get("/api/ajuda-mensagens", async (req, res) => {
     if (!auth(req, res)) return;
     try {
-      await atualizarNomes();
+      if (!nomesCache.size || Date.now() - nomesEm > 3600e3) await atualizarNomes();
       const horas = Math.min(Math.max(parseInt(req.query.horas || "48", 10) || 48, 1), 720);
       const limit = Math.min(Math.max(parseInt(req.query.limit || "400", 10) || 400, 1), 1500);
       const termos = String(req.query.grupo || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
