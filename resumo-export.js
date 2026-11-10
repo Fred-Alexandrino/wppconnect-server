@@ -18,7 +18,7 @@ const DATA_DIR = process.env.DATA_DIR || "./data";
 const ARQ = path.join(DATA_DIR, "resumo-msgs.jsonl");
 const REPO = process.env.RESUMOS_REPO || "Fred-Alexandrino/resumos-whatsapp";
 const GH_TOKEN = process.env.RESUMOS_GH_TOKEN || "";
-const RETENCAO_S = 8 * 24 * 3600;
+const RETENCAO_S = 30 * 24 * 3600; // 30 dias (botão Ajuda precisa de histórico)
 const TZ = "America/Fortaleza";
 
 function json(env, padrao) { try { return env ? JSON.parse(env) : padrao; } catch (_) { return padrao; } }
@@ -185,6 +185,31 @@ function registrarRotas(app, c) {
   app.use("/api/enviar-resumo", cors);
   app.use("/api/resumo-preview", cors);
   app.use("/api/resumo-grupos", cors);
+  app.use("/api/ajuda-mensagens", cors);
+  // Leitura de mensagens para o botão Ajuda (qualquer grupo arquivado, inclusive os fora do resumo).
+  // GET /api/ajuda-mensagens?grupo=<id ou parte do nome>[,outro...]&horas=48&limit=400
+  app.get("/api/ajuda-mensagens", async (req, res) => {
+    if (!auth(req, res)) return;
+    try {
+      await atualizarNomes();
+      const horas = Math.min(Math.max(parseInt(req.query.horas || "48", 10) || 48, 1), 720);
+      const limit = Math.min(Math.max(parseInt(req.query.limit || "400", 10) || 400, 1), 1500);
+      const termos = String(req.query.grupo || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+      if (!termos.length) return res.status(400).json({ erro: "parâmetro 'grupo' obrigatório (id ou parte do nome)" });
+      const msgs = lerMensagens(Math.floor(Date.now() / 1000) - horas * 3600);
+      const ids = new Set(msgs.map((m) => m.g));
+      const casados = [...ids].filter((id) => {
+        const nome = (nomeDe(id) || "").toLowerCase();
+        return termos.some((t) => id === t || (nome && nome.includes(t)));
+      });
+      const grupos = casados.map((id) => ({ id, nome: nomeDe(id) || id }));
+      const sel = msgs.filter((m) => casados.includes(m.g)).slice(-limit);
+      res.json({
+        horas, total: sel.length, grupos,
+        mensagens: sel.map((m) => ({ quando: fmt(m.t, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(",", ""), t: m.t, grupo: nomeDe(m.g) || m.g, remetente: m.r, texto: m.x })),
+      });
+    } catch (e) { res.status(500).json({ erro: e.message }); }
+  });
   app.post("/api/enviar-resumo", async (req, res) => {
     if (!auth(req, res)) return;
     try { res.json(await disparar()); } catch (e) { res.status(500).json({ erro: e.message }); }
