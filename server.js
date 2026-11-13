@@ -14,6 +14,7 @@ const {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
+  proto,
 } = require("@whiskeysockets/baileys");
 const express = require("express");
 const axios   = require("axios");
@@ -22,6 +23,57 @@ const fs      = require("fs");
 const path    = require("path");
 
 const resumoExport = require("./resumo-export");
+
+// ── Mensagens enviadas pela ponte, para reenvio sob pedido (13/11/2026) ───
+// Quando o celular de um membro não consegue decifrar a mensagem do grupo,
+// ele pede um reenvio ("retry"). O Baileys só consegue reenviar se souber o
+// conteúdo original — via getMessage(). Sem isso a mensagem fica para sempre
+// "Aguardando mensagem" no celular de quem pediu. Guardamos as mensagens
+// enviadas por 7 dias (em disco, para sobreviver a reinícios do serviço).
+const MSG_STORE_PATH = path.join(__dirname, "mensagens_enviadas.json");
+const MSG_STORE_TTL_MS = 7 * 24 * 3600 * 1000;
+let msgStore = new Map();
+let msgStoreTimer = null;
+try {
+  const bruto = JSON.parse(fs.readFileSync(MSG_STORE_PATH, "utf-8"));
+  const limite = Date.now() - MSG_STORE_TTL_MS;
+  for (const [id, e] of Object.entries(bruto)) if (e && e.t > limite && e.b) msgStore.set(id, e);
+  console.log(`📦 [Reenvio] ${msgStore.size} mensagem(ns) enviada(s) carregada(s) para reenvio`);
+} catch (_) { /* primeiro uso */ }
+function salvarMsgStore() {
+  if (msgStoreTimer) return;
+  msgStoreTimer = setTimeout(() => {
+    msgStoreTimer = null;
+    try {
+      const limite = Date.now() - MSG_STORE_TTL_MS;
+      for (const [id, e] of msgStore) if (e.t < limite) msgStore.delete(id);
+      const tmp = MSG_STORE_PATH + ".tmp";
+      fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(msgStore)));
+      fs.renameSync(tmp, MSG_STORE_PATH);
+    } catch (err) { console.error("⚠️  [Reenvio] Falha ao salvar:", err.message); }
+  }, 2000);
+}
+function guardarEnviada(m) {
+  try {
+    if (!m || !m.key || !m.key.id || !m.message) return;
+    const b = Buffer.from(proto.Message.encode(m.message).finish()).toString("base64");
+    msgStore.set(m.key.id, { t: Date.now(), j: m.key.remoteJid || "", b });
+    salvarMsgStore();
+  } catch (err) { console.error("⚠️  [Reenvio] Falha ao guardar:", err.message); }
+}
+async function getMessageParaReenvio(key) {
+  const e = key && key.id ? msgStore.get(key.id) : null;
+  if (!e) return undefined;
+  console.log(`🔁 [Reenvio] Pedido de reenvio atendido (${key.id} → ${e.j})`);
+  return proto.Message.decode(Buffer.from(e.b, "base64"));
+}
+const msgRetryCounterCache = new Map();
+const _retryCache = {
+  get: k => msgRetryCounterCache.get(k),
+  set: (k, v) => { msgRetryCounterCache.set(k, v); if (msgRetryCounterCache.size > 5000) msgRetryCounterCache.delete(msgRetryCounterCache.keys().next().value); },
+  del: k => msgRetryCounterCache.delete(k),
+  flushAll: () => msgRetryCounterCache.clear(),
+};
 const app = express();
 app.use(express.json({ limit: "20mb" }));
 
@@ -330,7 +382,19 @@ async function conectar() {
     // Habilita sincronização de histórico (necessário para fetchMessageHistory)
     syncFullHistory: true,
     markOnlineOnConnect: false,
+    // Reenvio sob pedido (13/11/2026): sem getMessage, o pedido de reenvio de quem não
+    // conseguiu decifrar a mensagem ficava sem resposta ("Aguardando mensagem").
+    getMessage: getMessageParaReenvio,
+    msgRetryCounterCache: _retryCache,
   });
+  {
+    const _enviarOriginal = sock.sendMessage.bind(sock);
+    sock.sendMessage = async (...args) => {
+      const r = await _enviarOriginal(...args);
+      guardarEnviada(r);
+      return r;
+    };
+  }
 
   sock.ev.on("creds.update", async () => {
     await saveCreds();
