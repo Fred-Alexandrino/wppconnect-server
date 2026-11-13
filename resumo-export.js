@@ -26,6 +26,7 @@ function json(env, padrao) { try { return env ? JSON.parse(env) : padrao; } catc
 const EXTRAS_PADRAO = {
   "120363430482583512": "Equipe Tupi Paulista/St Anast/Alv. Machado",
   "120363431601050989": "Equipe Ipixuna - 2C",
+  "120363414617683366": "Equipe Nova Ipixuna - 2C", // Nova Ipixuna I (13/11/2026)
   "120363410279004309": "Equipe Coração/Guatambu",
   "120363431235680039": "Equipe Alto Parana/Paranavaí",
   "120363430888041572": "Equipe União 2C",
