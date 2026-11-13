@@ -285,6 +285,7 @@ function registrarRotas(app, c) {
       const b = req.body || {};
       let jid = String(b.grupo || "").trim(); if (!jid.endsWith("@g.us")) jid += "@g.us";
       if (b.acao === "renomear") { await sock.groupUpdateSubject(jid, String(b.nome || "").slice(0, 100)); return res.json({ ok: true }); }
+      if (b.acao === "remover-foto") { await sock.removeProfilePicture(jid); return res.json({ ok: true }); }
       if (b.acao === "descricao") { await sock.groupUpdateDescription(jid, String(b.texto || "")); return res.json({ ok: true }); }
       if (b.acao === "adicionar" || b.acao === "remover") {
         const parts = (b.participantes || []).map((x) => String(x).includes("@") ? String(x) : String(x).replace(/\D/g, "") + "@s.whatsapp.net");
