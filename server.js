@@ -307,6 +307,12 @@ async function restaurarAuthDoGitHub() {
     return false;
   }
 
+  // Reconexão com QR novo (13/11/2026): com este arquivo presente, não restaura a sessão
+  // antiga (corrompida) do backup; ele é apagado depois que a sessão nova conecta e é salva.
+  if (fs.existsSync(path.join(__dirname, "SEM_RESTORE_AUTH"))) {
+    console.log("ℹ️  [Restore Auth] SEM_RESTORE_AUTH presente — sessão nova, aguardando QR");
+    return false;
+  }
   const jaTemSessao = fs.existsSync(AUTH_FOLDER) &&
     fs.readdirSync(AUTH_FOLDER).some(f => f.includes("creds"));
   if (jaTemSessao) return false; // sessao local ja existe, nao sobrescreve
@@ -441,6 +447,16 @@ async function conectar() {
       }
       console.log("✅ WhatsApp conectado!");
       console.log("📡 Monitoramento em tempo real ATIVO");
+      {
+        const flag = path.join(__dirname, "SEM_RESTORE_AUTH");
+        if (fs.existsSync(flag)) {
+          setTimeout(() => {
+            fazerBackupAuth()
+              .then(() => { try { fs.unlinkSync(flag); } catch (_) {} console.log("💾 [Restore Auth] Sessão nova salva no backup; restauração reativada"); })
+              .catch(err => console.error("⚠️  [Restore Auth] Backup da sessão nova falhou:", err.message));
+          }, 15000);
+        }
+      }
       // reconectou dentro da janela de graça — cancela o alerta pendente,
       // já que foi só uma instabilidade momentânea (comum em conexões
       // WebSocket) e não uma queda de verdade. Sem isso, todo blip
