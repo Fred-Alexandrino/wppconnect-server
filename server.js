@@ -721,7 +721,10 @@ app.post("/api/enviar-mensagem", async (req, res) => {
   if (!sock || statusConexao !== "conectado") {
     return res.status(503).json({ ok: false, erro: "WhatsApp não conectado" });
   }
-  const { grupoId, texto } = req.body || {};
+  const { grupoId, texto, mencoes } = req.body || {};
+  // mencoes: ids dos participantes (ex.: "1032...@lid" ou "5591...@s.whatsapp.net"); o texto deve trazer "@<número do id>".
+  const conteudo = { text: texto };
+  if (Array.isArray(mencoes) && mencoes.length) conteudo.mentions = mencoes.map(String);
   if (!grupoId || !texto) {
     return res.status(400).json({ ok: false, erro: "grupoId e texto são obrigatórios" });
   }
@@ -733,7 +736,7 @@ app.post("/api/enviar-mensagem", async (req, res) => {
   let ultimoErro = null;
   for (let tentativa = 0; tentativa <= esperas.length; tentativa++) {
     try {
-      await sock.sendMessage(grupoId, { text: texto });
+      await sock.sendMessage(grupoId, conteudo);
       return res.json({ ok: true, tentativas: tentativa + 1 });
     } catch (err) {
       ultimoErro = err;
