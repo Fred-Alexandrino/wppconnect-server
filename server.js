@@ -434,6 +434,7 @@ async function conectar() {
   //  Sempre ativo. Não depende do botão "Verificar Rondas".
   //  Processa mensagens assim que chegam nos grupos configurados.
   // ══════════════════════════════════════════════════════════════════════
+  resumoExport.ligarContatos(sock); // nomes dos contatos p/ identificar membros de grupos
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
     if (type !== "notify") return;
 

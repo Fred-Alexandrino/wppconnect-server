@@ -166,6 +166,27 @@ async function disparar() {
   return publicar();
 }
 
+// Contatos (nome da agenda do celular / nome público) por número e por LID, para identificar membros de grupos.
+const ARQ_CONTATOS = path.join(DATA_DIR, "contatos.json");
+let contatos = {};
+try { contatos = JSON.parse(fs.readFileSync(ARQ_CONTATOS, "utf8")); } catch (e) { contatos = {}; }
+let salvarContatosT = null;
+function guardarContatos(lista) {
+  for (const c of lista || []) {
+    const chaves = [c.id, c.jid, c.lid, c.phoneNumber].filter(Boolean).map((x) => String(x).split(":")[0].split("@")[0]);
+    for (const k of chaves) {
+      const atual = contatos[k] || {};
+      contatos[k] = { nome: c.name || atual.nome || "", notify: c.notify || c.verifiedName || atual.notify || "" };
+    }
+  }
+  clearTimeout(salvarContatosT);
+  salvarContatosT = setTimeout(() => { try { fs.writeFileSync(ARQ_CONTATOS, JSON.stringify(contatos)); } catch (e) {} }, 2000);
+}
+function ligarContatos(sock) {
+  sock.ev.on("contacts.upsert", guardarContatos);
+  sock.ev.on("contacts.update", guardarContatos);
+  sock.ev.on("messaging-history.set", ({ contacts }) => guardarContatos(contacts));
+}
 function registrarRotas(app, c) {
   ctx = c;
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -218,6 +239,61 @@ function registrarRotas(app, c) {
     } catch (e) {
       res.status(500).json({ erro: String(e.message || e).slice(0, 300) });
     }
+  });
+
+  // ── Gestão de grupos (13/11/2026): membros com nome, contatos e alterações ──
+  const normId = (x) => String(x || "").split(":")[0].split("@")[0];
+  app.get("/api/grupo-membros", async (req, res) => {
+    if (!auth(req, res)) return;
+    try {
+      const sock = ctx.getSock();
+      if (!sock || !sock.user) return res.status(503).json({ erro: "WhatsApp desconectado" });
+      let jid = String(req.query.grupo || "").trim(); if (!jid.endsWith("@g.us")) jid += "@g.us";
+      const meta = await sock.groupMetadata(jid);
+      const membros = (meta.participants || []).map((p) => {
+        const id = normId(p.id), pn = normId(p.phoneNumber || p.jid || (String(p.id).endsWith("@s.whatsapp.net") ? p.id : ""));
+        const c = contatos[pn] || contatos[id] || {};
+        return { id: p.id, numero: pn || "", nome: c.nome || c.notify || "", admin: p.admin || "" };
+      });
+      res.json({ ok: true, grupo: jid, nome: meta.subject, descricao: meta.desc || "", membros });
+    } catch (e) { res.status(500).json({ erro: String(e.message || e).slice(0, 300) }); }
+  });
+  app.get("/api/contatos", (req, res) => {
+    if (!auth(req, res)) return;
+    const q = String(req.query.busca || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const termos = q.split(",").map((t) => t.trim()).filter(Boolean);
+    const lista = Object.entries(contatos).map(([k, v]) => ({ chave: k, ...v }))
+      .filter((c) => !termos.length || termos.some((t) => String((c.nome || "") + " " + (c.notify || "")).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(t)));
+    res.json({ ok: true, total: Object.keys(contatos).length, contatos: lista.slice(0, 200) });
+  });
+  app.post("/api/contatos-sincronizar", async (req, res) => {
+    if (!auth(req, res)) return;
+    try {
+      const sock = ctx.getSock();
+      const antes = Object.keys(contatos).length;
+      await sock.resyncAppState(["critical_unblock_low", "regular_high", "regular_low", "regular", "critical_block"], true);
+      await new Promise((r) => setTimeout(r, 3000));
+      res.json({ ok: true, antes, depois: Object.keys(contatos).length });
+    } catch (e) { res.status(500).json({ erro: String(e.message || e).slice(0, 300), total: Object.keys(contatos).length }); }
+  });
+  // POST /api/grupo-gerenciar {grupo, acao: renomear|descricao|adicionar|remover, nome?, texto?, participantes?: ["5511..."]}
+  app.post("/api/grupo-gerenciar", async (req, res) => {
+    if (!auth(req, res)) return;
+    try {
+      const sock = ctx.getSock();
+      if (!sock || !sock.user) return res.status(503).json({ erro: "WhatsApp desconectado" });
+      const b = req.body || {};
+      let jid = String(b.grupo || "").trim(); if (!jid.endsWith("@g.us")) jid += "@g.us";
+      if (b.acao === "renomear") { await sock.groupUpdateSubject(jid, String(b.nome || "").slice(0, 100)); return res.json({ ok: true }); }
+      if (b.acao === "descricao") { await sock.groupUpdateDescription(jid, String(b.texto || "")); return res.json({ ok: true }); }
+      if (b.acao === "adicionar" || b.acao === "remover") {
+        const parts = (b.participantes || []).map((x) => String(x).includes("@") ? String(x) : String(x).replace(/\D/g, "") + "@s.whatsapp.net");
+        if (!parts.length) return res.status(400).json({ erro: "participantes vazio" });
+        const r = await sock.groupParticipantsUpdate(jid, parts, b.acao === "adicionar" ? "add" : "remove");
+        return res.json({ ok: true, resultado: r });
+      }
+      res.status(400).json({ erro: "ação inválida" });
+    } catch (e) { res.status(500).json({ erro: String(e.message || e).slice(0, 300) }); }
   });
 
   app.use("/api/ajuda-mensagens", cors);
@@ -273,4 +349,4 @@ function registrarRotas(app, c) {
   console.log(`[resumo] arquivo de mensagens ativo (${ARQ})` + (GH_TOKEN ? "" : " — sem RESUMOS_GH_TOKEN, envio desativado"));
 }
 
-module.exports = { registrar, registrarRotas };
+module.exports = { registrar, registrarRotas, ligarContatos };
