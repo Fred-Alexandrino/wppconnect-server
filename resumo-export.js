@@ -185,6 +185,41 @@ function registrarRotas(app, c) {
   app.use("/api/enviar-resumo", cors);
   app.use("/api/resumo-preview", cors);
   app.use("/api/resumo-grupos", cors);
+  // Troca a foto de um grupo (12/11/2026 — imagens de identificação dos grupos de equipe).
+  // POST /api/grupo-foto {grupo: "<id>@g.us", imagem: "<base64 PNG/JPEG>", verificar?: true}
+  // Só funciona onde o número da ponte é administrador; com verificar=true só informa se é admin.
+  app.post("/api/grupo-foto", async (req, res) => {
+    if (!auth(req, res)) return;
+    try {
+      const sock = ctx.getSock();
+      if (!sock || !sock.user) return res.status(503).json({ erro: "WhatsApp desconectado" });
+      let jid = String((req.body || {}).grupo || "").trim();
+      if (!/^\d+(-\d+)?(@g\.us)?$/.test(jid)) return res.status(400).json({ erro: "grupo inválido" });
+      if (!jid.endsWith("@g.us")) jid += "@g.us";
+      const meta = await sock.groupMetadata(jid);
+      const eu = String(sock.user.id || "").split(":")[0].split("@")[0];
+      const euLid = String(sock.user.lid || "").split(":")[0].split("@")[0];
+      const p = (meta.participants || []).find((x) => {
+        const id = String(x.id || "").split(":")[0].split("@")[0];
+        const pn = String(x.phoneNumber || x.jid || "").split(":")[0].split("@")[0];
+        return id === eu || pn === eu || (euLid && id === euLid);
+      });
+      const admin = !!(p && (p.admin === "admin" || p.admin === "superadmin"));
+      const soAdmins = !!meta.restrict;
+      if ((req.body || {}).verificar) return res.json({ ok: true, grupo: jid, nome: meta.subject, admin, soAdminsEditam: soAdmins });
+      if (!admin && soAdmins) return res.status(403).json({ erro: "o número da ponte não é administrador deste grupo", nome: meta.subject });
+      const img = Buffer.from(String((req.body || {}).imagem || ""), "base64");
+      if (img.length < 1000) return res.status(400).json({ erro: "imagem vazia" });
+      if (!(img[0] === 0xff && img[1] === 0xd8)) return res.status(400).json({ erro: "envie JPEG 640x640" });
+      // Envia direto (o updateProfilePicture do Baileys exige sharp/jimp, que não estão instalados na VM2).
+      await sock.query({ tag: "iq", attrs: { to: "s.whatsapp.net", type: "set", xmlns: "w:profile:picture", target: jid },
+        content: [{ tag: "picture", attrs: { type: "image" }, content: img }] });
+      res.json({ ok: true, grupo: jid, nome: meta.subject, admin });
+    } catch (e) {
+      res.status(500).json({ erro: String(e.message || e).slice(0, 300) });
+    }
+  });
+
   app.use("/api/ajuda-mensagens", cors);
   // Leitura de mensagens para o botão Ajuda (qualquer grupo arquivado, inclusive os fora do resumo).
   // GET /api/ajuda-mensagens?grupo=<id ou parte do nome>[,outro...]&horas=48&limit=400
